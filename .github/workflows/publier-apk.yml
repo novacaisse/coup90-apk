@@ -1,0 +1,59 @@
+name: Publier l'APK
+
+# Copie un fichier APK (adresse https publique) vers une Release de ce dépôt.
+# Le lien stable pour le public est ensuite :
+#   https://github.com/novacaisse/coup90-apk/releases/latest/download/coup90-latest.apk
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Adresse https publique de l'APK à copier"
+        required: true
+        type: string
+      tag:
+        description: "Nom de la version (exemple : v2.5.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Télécharger l'APK
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+        run: |
+          set -euo pipefail
+          case "$SOURCE_URL" in
+            https://*) ;;
+            *) echo "Adresse https obligatoire"; exit 1 ;;
+          esac
+          curl -fL --retry 3 --max-time 600 -o coup90-latest.apk "$SOURCE_URL"
+          ls -l coup90-latest.apk
+          sha256sum coup90-latest.apk
+          # Un APK est une archive zip : on refuse tout autre fichier.
+          unzip -tq coup90-latest.apk > /dev/null
+          unzip -l coup90-latest.apk | grep -q "AndroidManifest.xml"
+
+      - name: Créer la Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          SIZE=$(stat -c %s coup90-latest.apk)
+          SHA=$(sha256sum coup90-latest.apk | cut -d' ' -f1)
+          gh release create "$TAG" coup90-latest.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Coup90 $TAG" \
+            --notes "Application Android Coup90 (copie du fichier officiel). Taille : $SIZE octets. SHA-256 : $SHA" \
+            --latest
+
+      - name: Vérifier le lien public
+        run: |
+          set -euo pipefail
+          curl -sIL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/coup90-latest.apk" | grep -iE "^(HTTP/|content-length|content-type|location)" || true
